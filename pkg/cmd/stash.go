@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/util/rand"
@@ -32,10 +33,10 @@ type Stream interface {
 
 // StashOptions provides the information required to stash a blob on-cluster.
 type StashOptions struct {
-	configFlags *genericclioptions.ConfigFlags
 	genericclioptions.IOStreams
-	args []string
 
+	configFlags *genericclioptions.ConfigFlags
+	args        []string
 	blobReader  io.Reader
 	client      client.Client
 	partitioner cmstore.Partitioner
@@ -76,6 +77,8 @@ func NewCmdStash(streams genericclioptions.IOStreams) *cobra.Command {
 
 	o.configFlags.AddFlags(cmd.Flags())
 
+	cmd.AddCommand(NewCmdGet(streams))
+
 	return cmd
 }
 
@@ -102,7 +105,7 @@ func (o *StashOptions) Complete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	o.partitioner = cmstore.NewPartitioner(512)
+	o.partitioner = cmstore.NewPartitioner(1024 * 10)
 
 	return nil
 }
@@ -128,18 +131,13 @@ func (o *StashOptions) Run() error {
 	}
 
 	data := buf.Bytes()
-	if _, err = fnv.New32().Write(data); err != nil {
-		return err
-	}
-
 	var hash string
-	hash, err = safeHash32(string(data))
+	hash, err = safeHash64(buf.String())
 	if err != nil {
 		return err
 	}
 	id := hash
 
-	fmt.Printf("bloop: %s\n", id)
 	stream := cmstore.NewStream(o.client, "default", id)
 	if err = o.partitioner.Split(data, stream); err != nil {
 		return err
@@ -150,14 +148,25 @@ func (o *StashOptions) Run() error {
 	return err
 }
 
-func safeHash32(s string) (string, error) {
-	hasher := fnv.New32a()
+func safeHash64(s string) (string, error) {
+	hasher := fnv.New64a()
 	if _, err := hasher.Write([]byte(s)); err != nil {
 		return "", nil
 	}
 
-	var sum []byte
-	sum = hasher.Sum(sum)
+	sum := hasher.Sum(nil)
+	safe := strings.Map(func(r rune) rune {
+		// Strip any \x00 control characters (SafeEndcodeString can't handle them)
+		if r == 0 {
+			return 'z'
+		}
+		return r
+	}, rand.SafeEncodeString(string(sum)))
 
-	return rand.SafeEncodeString(string(sum)), nil
+	fmt.Printf("safe: %s, len: %d\n", safe, len(safe))
+	for _, r := range []rune(safe) {
+		fmt.Printf("rune: %c\n", r)
+	}
+
+	return safe, nil
 }
