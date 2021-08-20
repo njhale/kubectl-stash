@@ -1,6 +1,6 @@
 # kubectl-stash
 
-kubectl-stash is a Kubernetes plugin that lets you treat your cluster like a key-value store.
+kubectl-stash is a kubectl plugin that lets you treat your cluster like a key-value store.
 
 ## Examples
 
